@@ -2,16 +2,32 @@ import sys
 import os
 import json
 
-from typing import Type, Iterator, Callable, List, Any
+from typing import Type, Iterator, Callable, List, Any, BinaryIO
 
 __version__ = "0.1"
+
 
 CHECKS = {
     "lineLength": {
         "check_function": lambda f, d: f.max_line_length(),
-        "compare": lambda x, y: x < y
+        "compare": lambda x, y: x < y,
+        "crit_display": "Lines should not be too wide"
+    },
+    "fileLength": {
+        "check_function": lambda f, d: f.line_count(),
+        "compare": lambda x, y: x <= y,
+        "crit_display": "File should not have too many lines"
+    },
+    "requireHeaderComment": {
+        "check_function": lambda f, d: f.has_header_comment(),
+        "compare": lambda x, y: x == y,
+        "crit_display": "File should start with a comment"
     }
 }
+
+
+def char80(c: str):
+    print("".ljust(79, c))
 
 
 class style():
@@ -43,8 +59,8 @@ class Config:
         ''' Set the options to default. '''
         self.config = [
             {'id': 'lineLength',            'data': 80},
-            {'id': 'requireHeaderComment',  'data': True},
-            {'id': 'requireFullStop',       'data': True}
+            {'id': 'fileLength',            'data': 250},
+            {'id': 'requireHeaderComment',  'data': True}
         ]
 
     def get_config_options(self) -> Iterator:
@@ -54,19 +70,26 @@ class Config:
 
 
 class CodeFile:
-    language = None
-    filename = ""
-    fileobj = None
-    content = ""
+    language: str = None
+    filename: str = ""
+    fileobj: BinaryIO = None
+    content: str = ""
 
     def __init__(self, filename: str):
-        # TODO Implement this function.
         self.filename = filename
         self.fileobj = open(filename)
         self.content = self.fileobj.read()
+        self.language = filename.split('.')[-1]
 
     def max_line_length(self) -> int:
         return max([len(x) for x in self.content.split("\n")])
+
+    def line_count(self) -> int:
+        return len(self.content.split('\n'))
+
+    def has_header_comment(self):
+        # TODO
+        return False
 
 
 class CommandlineOptions:
@@ -113,8 +136,9 @@ class Check:
 
     def print_ln(self):
         "Print a line with information regarding the result of the test."
-        print(f"{self.display_name.ljust(40)}", end="")
-        print(f" - {self.crit_display} : {self.result}".ljust(37), end="")
+        print(f"{self.display_name.ljust(60)}"[:60], end="")
+        print(
+            f" - {self.crit_display} : {self.result}".ljust(17)[:17], end="")
 
         if self.passed:
             print(f"{style.checkmark}")
@@ -130,6 +154,7 @@ class Checker:
     config = None
     checks: List[Type[Check]] = []
     codefile = None
+    passed_all = False
 
     def __init__(self, config: Type[CodeFile], codefile: Type[CodeFile]):
         self.config = config
@@ -138,8 +163,9 @@ class Checker:
     def set_checks(self):
         for config_option in self.config.get_config_options():
             if config_option['id'] in CHECKS:
-                chk = Check(config_option['id'], self.codefile)
                 chk_ops = CHECKS[config_option['id']]
+                chk = Check(chk_ops['crit_display'],
+                            self.codefile)
                 chk.set_check(
                     chk_ops['check_function'],
                     config_option['data'],
@@ -153,18 +179,23 @@ class Checker:
             c.check(c)
 
     def print_result(self):
-        total = 0
-        passed = 0
+        char80("-")
+
+        total, passed = 0, 0
+
         for c in self.checks:
             total += 1
             if c.passed:
                 passed += 1
             c.print_ln()
 
+        char80("-")
         if passed == total:
+            self.passed_all = True
             print(f"{'All passed'.ljust(76)} {style.checkmark}")
         else:
-            print(f"{'Failed'.ljust(75)} {(passed/total):.2f}/1.00")
+            part = f"Failed {total-passed} out of {total} tests.".ljust(62)
+            print(f"{part} Score: {(passed/total):.2f}/1.00")
 
         return
 
@@ -184,18 +215,25 @@ def set_config(cli: Type[CommandlineOptions], cfg: Type[Config]):
 
 
 def main():
+
     cli = CommandlineOptions()
     cfg = Config()
+    try:
+        cli.parse_options(sys.argv)
+        codefile = CodeFile(cli.file_to_check)
+    except Exception as e:
+        print(e)
+        sys.exit(-1)
 
-    cli.parse_options(sys.argv)
-    codefile = CodeFile(cli.file_to_check)
     set_config(cli, cfg)
     chkr = Checker(cfg, codefile)
     chkr.set_checks()
     chkr.check_all()
     chkr.print_result()
-
-    # raise NotImplementedError
+    if chkr.passed_all:
+        sys.exit(0)
+    else:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
