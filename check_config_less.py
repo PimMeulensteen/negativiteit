@@ -2,11 +2,10 @@ import sys
 import os
 import json
 
-from typing import Type, Iterator
+from typing import Type, Iterator, Callable, List, Any
 
 __version__ = "0.1"
 
-# f = CodeFile()
 CHECKS = {
     "lineLength": {
         "check_function": lambda f, d: f.max_line_length(),
@@ -28,20 +27,20 @@ class style():
     UNDERLINE = '\033[4m'
     RESET = '\033[0m'
 
-    chkmrk = f"{GREEN}✓{WHITE}"
+    checkmark = f"{GREEN}✓{WHITE}"
     crs = f"{RED}✗{WHITE}"
 
 
 class Config:
     '''Keep track of which options to have. Can construct from a file.'''
-    config = []
+    config: List[dict] = []
 
     def read_from_file(self, file: str):
-        '''Try to read file, throw error on failure'''
+        ''' Try to read file, throw error on failure. '''
         raise NotImplementedError
 
     def set_default_config(self):
-        '''Set the options to default'''
+        ''' Set the options to default. '''
         self.config = [
             {'id': 'lineLength',            'data': 80},
             {'id': 'requireHeaderComment',  'data': True},
@@ -49,24 +48,25 @@ class Config:
         ]
 
     def get_config_options(self) -> Iterator:
+        ''' Iterator over all set options. '''
         for n in self.config:
             yield n
-        '''Set the options to default'''
-        # raise NotImplementedError
 
 
 class CodeFile:
     language = None
     filename = ""
+    fileobj = None
     content = ""
 
-    def __init__(self, filename):
+    def __init__(self, filename: str):
         # TODO Implement this function.
         self.filename = filename
+        self.fileobj = open(filename)
+        self.content = self.fileobj.read()
 
-    def max_line_length(self):
-        # TODO Implement this function.
-        return 100
+    def max_line_length(self) -> int:
+        return max([len(x) for x in self.content.split("\n")])
 
 
 class CommandlineOptions:
@@ -77,7 +77,11 @@ class CommandlineOptions:
 
     def parse_options(self, argv: list):
         # TODO Implement this function.
-        raise NotImplementedError
+        # Check if there is at least one argument.
+        if len(argv) < 2:
+            raise ValueError("Expected at least one argument, got 0")
+
+        self.file_to_check = argv[1]
 
 
 class Check:
@@ -92,7 +96,7 @@ class Check:
     result = None
     passed = None
 
-    def __init__(self, display_name: str, codefile: Type[CodeFile], crit_display: str = "result"):
+    def __init__(self, display_name, codefile, crit_display="result"):
         self.display_name = display_name
         self.crit_display = crit_display
         self.codefile = codefile
@@ -110,36 +114,38 @@ class Check:
     def print_ln(self):
         "Print a line with information regarding the result of the test."
         print(f"{self.display_name.ljust(40)}", end="")
-        print(
-            f"{(' - ' + self.crit_display + ' : ' + str(self.result)).ljust(37)}", end="")
+        print(f" - {self.crit_display} : {self.result}".ljust(37), end="")
 
         if self.passed:
-            print(f"{style.chkmrk}")
+            print(f"{style.checkmark}")
         else:
             print(f"{style.crs}")
 
 
 class Checker:
-
+    '''
+    Object to keep track of all Checks which need to be executed. Can run
+    all checks and print their results.
+    '''
     config = None
-    checks = []
+    checks: List[Type[Check]] = []
     codefile = None
 
-    def __init__(self, config: Type[Config], codefile: Type[CodeFile]):
+    def __init__(self, config: Type[CodeFile], codefile: Type[CodeFile]):
         self.config = config
         self.codefile = codefile
 
     def set_checks(self):
         for config_option in self.config.get_config_options():
-            chk = Check(config_option['id'], self.codefile)
             if config_option['id'] in CHECKS:
+                chk = Check(config_option['id'], self.codefile)
                 chk_ops = CHECKS[config_option['id']]
                 chk.set_check(
                     chk_ops['check_function'],
                     config_option['data'],
                     chk_ops['compare']
                 )
-            self.checks.append(chk)
+                self.checks.append(chk)
 
     def check_all(self):
         ''' Execute all checks which are present in the Checker-object '''
@@ -156,35 +162,34 @@ class Checker:
             c.print_ln()
 
         if passed == total:
-            print(f" {'All passed'.ljust(75)} {style.chkmrk}")
+            print(f"{'All passed'.ljust(76)} {style.checkmark}")
         else:
-            print(f"{'Failed some tests'.ljust(75)} {(passed/total):.2f}/1.00")
+            print(f"{'Failed'.ljust(75)} {(passed/total):.2f}/1.00")
 
         return
 
 
-def set_config(cli, cfg):
-    # Set the config depending on the command line options.
-    if cli.config_file == None:
+def set_config(cli: Type[CommandlineOptions], cfg: Type[Config]):
+    # Set the config depending on the CommandlineOptions line options.
+    if cli.config_file is None:
         cfg.set_default_config()
     else:
         try:
             cfg.read_from_file(cli.config_file)
+            return
         except IOError:
             print(
                 f"could not read {cli.config_file}. Falling back to default.")
-            cfg.set_default_config()
+    cfg.set_default_config()
 
 
 def main():
-    # cli = CommandlineOptions()
+    cli = CommandlineOptions()
     cfg = Config()
 
-    # cli.parse_options(sys.argv)
-
-    # set_config(cli, cfg)
-    cfg.set_default_config()
-    codefile = CodeFile("a")
+    cli.parse_options(sys.argv)
+    codefile = CodeFile(cli.file_to_check)
+    set_config(cli, cfg)
     chkr = Checker(cfg, codefile)
     chkr.set_checks()
     chkr.check_all()
